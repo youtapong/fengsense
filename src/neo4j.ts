@@ -31,6 +31,19 @@ export async function initializeNeo4j() {
       }
     `);
     console.log("✅ Neo4j Vector Index checked/initialized successfully.");
+
+    // Automatically create Vector Index for external QA cache if it doesn't exist
+    await session.run(`
+      CREATE VECTOR INDEX \`external_qa_vector_index\` IF NOT EXISTS
+      FOR (q:ExternalQA) ON (q.embedding)
+      OPTIONS {
+        indexConfig: {
+          \`vector.dimensions\`: 1536,
+          \`vector.similarity_function\`: 'cosine'
+        }
+      }
+    `);
+    console.log("✅ Neo4j External QA Vector Index checked/initialized successfully.");
   } catch (error) {
     console.error("❌ Failed to connect or initialize Neo4j database:", error);
   } finally {

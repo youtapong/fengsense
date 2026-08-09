@@ -10,6 +10,7 @@ Nodes & Properties:
 - (:Course {name: string})
 - (:Chapter {title: string})
 - (:Chunk {title: string, content: string})
+- (:ExternalQA {question: string, answer: string})
 
 Relationships:
 - (:Course)-[:HAS_CHAPTER]->(:Chapter)
@@ -18,7 +19,12 @@ Relationships:
 Instructions:
 1. Answer ONLY with the raw Cypher query.
 2. Do not include markdown code block syntax (like \`\`\`cypher) or any explanation. Just return the raw Cypher string.
-3. Use case-insensitive regex or 'CONTAINS' for search terms, for example: 'c.content CONTAINS "..."' or 'c.title CONTAINS "..."'.
+3. Use case-insensitive regex or 'CONTAINS' for search terms.
+4. You can search both (:Chunk) and (:ExternalQA) nodes.
+5. IMPORTANT: Unify the return fields. The query MUST return exactly two columns: 'title' and 'content'.
+   - For (:Chunk) nodes: RETURN c.title AS title, c.content AS content
+   - For (:ExternalQA) nodes: RETURN q.question AS title, q.answer AS content
+   - You may use UNION to search and return results from both types of nodes if relevant to the query.
 `;
 
 export const queryNeo4j = new Elysia({ prefix: "/query-neo4j" })
