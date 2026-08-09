@@ -10,43 +10,6 @@ export const auth = new Elysia({ prefix: "/auth" })
     })
   )
   .post(
-    "/signup",
-    async ({ body, set }) => {
-      const { username, password } = body;
-      try {
-        // Hash password using Bun's built-in high-performance password hashing API
-        const passwordHash = await Bun.password.hash(password);
-
-        const [newUser] = await sql`
-          INSERT INTO "user" (username, password)
-          VALUES (${username}, ${passwordHash})
-          RETURNING id, username, created_at
-        `;
-
-        return {
-          success: true,
-          message: "User registered successfully",
-          user: newUser,
-        };
-      } catch (error: any) {
-        set.status = 400;
-        if (error.code === "23505") { // Unique constraint violation code in PostgreSQL
-          return { success: false, error: "Username already exists" };
-        }
-        return { success: false, error: error.message || "Failed to register user" };
-      }
-    },
-    {
-      body: t.Object({
-        username: t.String(),
-        password: t.String(),
-      }),
-      detail: {
-        summary: "Sign up a new user",
-      },
-    }
-  )
-  .post(
     "/login",
     async ({ body, jwt, set }) => {
       const { username, password } = body;
@@ -92,6 +55,45 @@ export const auth = new Elysia({ prefix: "/auth" })
       }),
       detail: {
         summary: "Log in with username and password",
+        security: [],
+      },
+    }
+  )
+  .post(
+    "/signup",
+    async ({ body, set }) => {
+      const { username, password } = body;
+      try {
+        // Hash password using Bun's built-in high-performance password hashing API
+        const passwordHash = await Bun.password.hash(password);
+
+        const [newUser] = await sql`
+          INSERT INTO "user" (username, password)
+          VALUES (${username}, ${passwordHash})
+          RETURNING id, username, created_at
+        `;
+
+        return {
+          success: true,
+          message: "User registered successfully",
+          user: newUser,
+        };
+      } catch (error: any) {
+        set.status = 400;
+        if (error.code === "23505") { // Unique constraint violation code in PostgreSQL
+          return { success: false, error: "Username already exists" };
+        }
+        return { success: false, error: error.message || "Failed to register user" };
+      }
+    },
+    {
+      body: t.Object({
+        username: t.String(),
+        password: t.String(),
+      }),
+      detail: {
+        summary: "Sign up a new user",
+        security: [],
       },
     }
   )
