@@ -1,31 +1,7 @@
 import { Elysia, t } from "elysia";
 import { jwt } from "@elysiajs/jwt";
 import { neo4jDriver } from "./neo4j";
-
-const systemPrompt = `
-You are a Neo4j Cypher query generator.
-Your job is to translate a Thai natural language question into a valid Cypher query based on the following graph schema:
-
-Nodes & Properties:
-- (:Course {name: string})
-- (:Chapter {title: string})
-- (:Chunk {title: string, content: string})
-- (:ExternalQA {question: string, answer: string})
-
-Relationships:
-- (:Course)-[:HAS_CHAPTER]->(:Chapter)
-- (:Chapter)-[:HAS_CHUNK]->(:Chunk)
-
-Instructions:
-1. Answer ONLY with the raw Cypher query.
-2. Do not include markdown code block syntax (like \`\`\`cypher) or any explanation. Just return the raw Cypher string.
-3. Use case-insensitive regex or 'CONTAINS' for search terms.
-4. You can search both (:Chunk) and (:ExternalQA) nodes.
-5. IMPORTANT: Unify the return fields. The query MUST return exactly two columns: 'title' and 'content'.
-   - For (:Chunk) nodes: RETURN c.title AS title, c.content AS content
-   - For (:ExternalQA) nodes: RETURN q.question AS title, q.answer AS content
-   - You may use UNION to search and return results from both types of nodes if relevant to the query.
-`;
+import { CYPHER_SYSTEM_PROMPT } from "./prompts";
 
 export const queryNeo4j = new Elysia({ prefix: "/query-neo4j" })
   .use(
@@ -68,7 +44,7 @@ export const queryNeo4j = new Elysia({ prefix: "/query-neo4j" })
           body: JSON.stringify({
             model: qwenModel,
             messages: [
-              { role: "system", content: systemPrompt },
+              { role: "system", content: CYPHER_SYSTEM_PROMPT },
               { role: "user", content: `คำถาม: "${question}" \nสร้าง Cypher query:` },
             ],
             temperature: 0.1,

@@ -6,6 +6,7 @@ import { auth } from "./auth";
 import { document } from "./document";
 import { queryNeo4j } from "./query-neo4j";
 import { queryExternalAI } from "./query-external-ai";
+import { queryFengSense } from "./query-fengsense";
 
 // Initialize PostgreSQL database and user table
 await initializeDatabase();
@@ -45,6 +46,7 @@ const app = new Elysia({ prefix: '/fengsense' })
   .use(document)
   .use(queryNeo4j)
   .use(queryExternalAI)
+  .use(queryFengSense)
   .get("/", () => "Hello Elysia")
   .listen(3000);
 

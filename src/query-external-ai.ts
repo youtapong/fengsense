@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 import { jwt } from "@elysiajs/jwt";
 import { neo4jDriver } from "./neo4j";
 import { generateEmbedding } from "./services/markdownIngest";
+import { FENGSHUI_EXPERT_SYSTEM_PROMPT } from "./prompts";
 
 export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
   .use(
@@ -90,8 +91,7 @@ export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
             messages: [
               {
                 role: "system",
-                content:
-                  "You are a helpful assistant specializing in Feng Shui and generic knowledge.",
+                content: FENGSHUI_EXPERT_SYSTEM_PROMPT,
               },
               { role: "user", content: question },
             ],
