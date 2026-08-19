@@ -8,7 +8,7 @@ services:
     container_name: fengsense-backend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3006:3000"
     env_file:
       - .env
     environment:
