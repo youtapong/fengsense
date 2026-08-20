@@ -105,7 +105,7 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
         return { success: false, error: "Invalid or expired token" };
       }
 
-      const { question } = body;
+      const { question, query_option = "int" } = body;
       const ntUrl = process.env.NT_QWEN_API_URL || "https://aigateway.ntictsolution.com/v1";
       const ntKey = process.env.NT_QWEN_API_KEY || "";
       const ntModel = process.env.NT_QWEN_MODEL || "Qwen3.8-27B";
@@ -114,10 +114,116 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
       const deepseekKey = process.env.DEEPSEEK_API_KEY || "";
       const deepseekModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
 
+      // ฟังก์ชันสำหรับถาม AI ผู้เชี่ยวชาญภายนอก (DeepSeek -> fallback NT Qwen)
+      const askExternalExpert = async () => {
+        let answer = "";
+        let expertModelUsed = "deepseek";
+
+        const expertRes = await fetch(`${deepseekUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${deepseekKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: deepseekModel,
+            messages: [
+              { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
+              { role: "user", content: question },
+            ],
+            temperature: 0.7,
+          }),
+        });
+
+        if (expertRes.ok) {
+          const expertData = (await expertRes.json()) as any;
+          answer = expertData.choices?.[0]?.message?.content || "";
+        } else {
+          console.warn("⚠️ DeepSeek expert failed, falling back to NT Qwen:", expertRes.statusText);
+          const qwenExpertRes = await fetch(`${ntUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ntKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: ntModel,
+              messages: [
+                { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
+                { role: "user", content: question },
+              ],
+              temperature: 0.7,
+              max_tokens: 1000,
+            }),
+          });
+
+          if (qwenExpertRes.ok) {
+            const qwenData = (await qwenExpertRes.json()) as any;
+            answer =
+              qwenData.choices?.[0]?.messages?.content ||
+              qwenData.choices?.[0]?.message?.content ||
+              "";
+            expertModelUsed = "nt_qwen";
+          }
+        }
+
+        return { answer, expertModelUsed };
+      };
+
+      // ฟังก์ชันสำหรับบันทึกคำถาม-คำตอบลง Neo4j (Auto-Cache)
+      const cacheExternalQA = async (ans: string, sourceModel: string) => {
+        const session = neo4jDriver.session();
+        try {
+          const embedding = await generateEmbedding(question);
+          await session.run(
+            `
+            CREATE (q:ExternalQA {
+              question: $question,
+              answer: $answer,
+              embedding: $embedding,
+              source: $source,
+              timestamp: timestamp()
+            })
+          `,
+            { question, answer: ans, embedding, source: sourceModel }
+          );
+        } catch (cacheErr) {
+          console.warn("⚠️ Failed to cache external QA to Neo4j:", cacheErr);
+        } finally {
+          await session.close();
+        }
+      };
+
       try {
         // ========================================================
-        // 1. วิเคราะห์คำถาม โดยส่งให้ NT Qwen สร้าง Cypher Query
+        // ตัวเลือก "ext" : External data - หาค่าใน DeepSeek โดยตรง
         // ========================================================
+        if (query_option === "ext") {
+          const { answer, expertModelUsed } = await askExternalExpert();
+
+          if (!answer) {
+            set.status = 502;
+            return { success: false, query_option, error: "Empty response from AI expert" };
+          }
+
+          // บันทึกคำถามและคำตอบไว้ที่ Neo4j (Auto-Cache)
+          await cacheExternalQA(answer, expertModelUsed);
+
+          return {
+            success: true,
+            query_option: "ext",
+            question,
+            answer,
+            source: `${expertModelUsed}_ai`,
+            resultsCount: 1,
+            savedToGraph: true,
+          };
+        }
+
+        // ========================================================
+        // ตัวเลือก "int" (Default) : หาค่าใน Neo4j ก่อน ค่อยไปหา External data
+        // ========================================================
+        // 1. วิเคราะห์คำถาม โดยส่งให้ NT Qwen สร้าง Cypher Query
         const cypherRes = await fetch(`${ntUrl}/chat/completions`, {
           method: "POST",
           headers: {
@@ -145,9 +251,7 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
           "";
         cypherQuery = cypherQuery.replace(/\`\`\`(cypher)?/g, "").trim();
 
-        // ========================================================
         // 2. ส่งคำถามที่วิเคราะห์แล้ว ค้นหาใน Neo4j
-        // ========================================================
         const session = neo4jDriver.session();
         let rawRecords: any[] = [];
 
@@ -156,14 +260,15 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
             const result = await session.run(cypherQuery);
             rawRecords = result.records.map((r) => r.toObject());
           } catch (queryErr) {
-            console.warn("⚠️ Cypher execution error, falling back to LLM:", queryErr);
+            console.warn("⚠️ Cypher execution error, falling back to external AI:", queryErr);
           }
         }
+        await session.close();
 
         // ทำ Relevance Scoring & Re-ranking จัดเรียงชุดข้อมูลที่ตรงที่สุดขึ้นก่อน
         const records = rerankRecords(question, rawRecords);
 
-        // ถ้าพบข้อมูลใน Neo4j -> ส่งให้ DeepSeek สังเคราะห์และสรุปคำตอบ (RAG Synthesis)
+        // 3. ถ้าพบข้อมูลใน Neo4j -> ส่งให้ DeepSeek สังเคราะห์และสรุปคำตอบ (RAG Synthesis)
         if (records.length > 0) {
           const contextText = records
             .map(
@@ -240,9 +345,9 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
             console.warn("⚠️ RAG synthesis error, falling back to raw record content:", ragErr);
           }
 
-          await session.close();
           return {
             success: true,
+            query_option: "int",
             question,
             source: "neo4j_graph",
             cypherQuery,
@@ -254,92 +359,27 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
         }
 
         // ========================================================
-        // 3. ถ้าไม่พบข้อมูลใน Graph -> ปรึกษา DeepSeek Expert
+        // 4. ถ้าไม่พบข้อมูลใน Neo4j (Internal) -> ไปหาที่ External data (DeepSeek)
         // ========================================================
-        let answer = "";
-        let expertModelUsed = "deepseek";
-
-        const expertRes = await fetch(`${deepseekUrl}/chat/completions`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${deepseekKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: deepseekModel,
-            messages: [
-              { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
-              { role: "user", content: question },
-            ],
-            temperature: 0.7,
-          }),
-        });
-
-        if (expertRes.ok) {
-          const expertData = (await expertRes.json()) as any;
-          answer = expertData.choices?.[0]?.message?.content || "";
-        } else {
-          console.warn("⚠️ DeepSeek expert failed, falling back to NT Qwen:", expertRes.statusText);
-          // Fallback to NT Qwen
-          const qwenExpertRes = await fetch(`${ntUrl}/chat/completions`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${ntKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: ntModel,
-              messages: [
-                { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
-                { role: "user", content: question },
-              ],
-              temperature: 0.7,
-              max_tokens: 1000,
-            }),
-          });
-
-          if (qwenExpertRes.ok) {
-            const qwenData = (await qwenExpertRes.json()) as any;
-            answer =
-              qwenData.choices?.[0]?.messages?.content ||
-              qwenData.choices?.[0]?.message?.content ||
-              "";
-            expertModelUsed = "nt_qwen";
-          }
-        }
+        const { answer, expertModelUsed } = await askExternalExpert();
 
         if (!answer) {
-          await session.close();
           set.status = 502;
-          return { success: false, error: "Empty response from AI expert" };
+          return { success: false, query_option: "int", error: "Empty response from AI expert" };
         }
 
-        // ========================================================
-        // 4. บันทึกคำถามและคำตอบไว้ที่ Neo4j (Auto-Cache)
-        // ========================================================
-        const embedding = await generateEmbedding(question);
-        await session.run(
-          `
-          CREATE (q:ExternalQA {
-            question: $question,
-            answer: $answer,
-            embedding: $embedding,
-            source: $source,
-            timestamp: timestamp()
-          })
-        `,
-          { question, answer, embedding, source: expertModelUsed }
-        );
-
-        await session.close();
+        // บันทึกคำถามและคำตอบไว้ที่ Neo4j (Auto-Cache)
+        await cacheExternalQA(answer, expertModelUsed);
 
         return {
           success: true,
+          query_option: "int",
           question,
           answer,
           source: `${expertModelUsed}_ai`,
           resultsCount: 1,
           savedToGraph: true,
+          fallbackToExternal: true,
         };
       } catch (error: any) {
         set.status = 500;
@@ -355,6 +395,12 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
         question: t.String({
           description: "คำถามภาษาไทยเกี่ยวกับฮวงจุ้ยหรือบทเรียนในระบบ",
         }),
+        query_option: t.Optional(
+          t.Union([t.Literal("int"), t.Literal("ext")], {
+            description: 'ตัวเลือกการค้นหา: "int" = หาใน Neo4j ก่อน ค่อยไปหาที่ External data (ค่าเริ่มต้น), "ext" = หาที่ External data (DeepSeek) โดยตรง',
+            default: "int",
+          })
+        ),
       }),
       headers: t.Object({
         authorization: t.String({
@@ -362,7 +408,7 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
         }),
       }),
       detail: {
-        summary: "Query FengSense with Hybrid NT Qwen (Cypher) + DeepSeek (RAG Synthesis) + Neo4j Auto-Cache",
+        summary: "Query FengSense (Option: 'int' for Neo4j first then external fallback [Default], 'ext' for DeepSeek external AI directly)",
         security: [{ bearerAuth: [] }],
       },
     }
