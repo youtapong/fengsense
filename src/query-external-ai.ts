@@ -174,15 +174,13 @@ export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
 
         const answer = removeChinese(rawAnswer);
 
-        // 4. Save the new answer to Neo4j cache
+        // 4. Save the new answer to Neo4j cache using MERGE
         await session.run(
           `
-          CREATE (q:ExternalQA {
-            question: $question,
-            answer: $answer,
-            embedding: $embedding,
-            timestamp: timestamp()
-          })
+          MERGE (q:ExternalQA { question: $question })
+          SET q.answer = $answer,
+              q.embedding = $embedding,
+              q.timestamp = timestamp()
         `,
           {
             question,

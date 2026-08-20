@@ -53,7 +53,7 @@ function rerankRecords(
   question: string,
   records: Array<{ title?: string; content?: string }>
 ): Array<{ title: string; content: string; relevanceScore: number }> {
-  const normalizedQ = question.toLowerCase();
+  const normalizedQ = question.toLowerCase().trim();
 
   // สกัดคำสำคัญ (Keywords) โดยตัดคำเชื่อมทั่วไป
   const stopWords = new Set([
@@ -62,20 +62,33 @@ function rerankRecords(
   const rawWords = normalizedQ.split(/[\s,.\-_/\\+]+/);
   const keywords = rawWords.filter((w) => w.length > 1 && !stopWords.has(w));
 
-  const scoredRecords = records.map((r) => {
+  // 1. ตัดรายการที่ซ้ำซ้อนกันออก (Deduplication)
+  const uniqueRecords: Array<{ title: string; content: string }> = [];
+  const seen = new Set<string>();
+  for (const r of records) {
+    const key = `${(r.title || "").trim()}:::${(r.content || "").trim().substring(0, 100)}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueRecords.push({ title: r.title || "", content: r.content || "" });
+    }
+  }
+
+  const scoredRecords = uniqueRecords.map((r) => {
     const title = r.title || "";
     const content = r.content || "";
-    const lowerTitle = title.toLowerCase();
+    const lowerTitle = title.toLowerCase().trim();
     const lowerContent = content.toLowerCase();
 
     let score = 0;
 
-    // 1. ถ้า Title ตรงกับคำถาม หรือคำถามมี Title บรรจุอยู่
-    if (lowerTitle && (normalizedQ.includes(lowerTitle) || lowerTitle.includes(normalizedQ))) {
-      score += 50;
+    // 2. ถ้า Title ตรงกับคำถามเป๊ะๆ (Exact Match เช่น ExternalQA หรือหัวข้อตรงเป๊ะ)
+    if (lowerTitle && lowerTitle === normalizedQ) {
+      score += 200; // การันตีอันดับ 1 คะแนนสูงสุด
+    } else if (lowerTitle && (normalizedQ.includes(lowerTitle) || lowerTitle.includes(normalizedQ))) {
+      score += 80;
     }
 
-    // 2. ตรวจสอบการตรงกันของ Keywords ใน Title และ Content
+    // 3. ตรวจสอบการตรงกันของ Keywords ใน Title และ Content
     for (const kw of keywords) {
       if (lowerTitle.includes(kw)) {
         score += 20; // ปรากฏในหัวข้อ ให้คะแนนสูงมาก
@@ -85,7 +98,7 @@ function rerankRecords(
       }
     }
 
-    // 3. โบนัสพิเศษสำหรับคำหลักสำคัญเฉพาะกลุ่ม
+    // 4. โบนัสพิเศษสำหรับคำหลักสำคัญเฉพาะกลุ่ม
     const mainPhrases = [
       "จัดสวน", "สวน", "โต๊ะทำงาน", "ห้องนอน", "เตียงนอน", "ประตู", "หน้าต่าง",
       "บันได", "ห้องน้ำ", "ห้องครัว", "ทิศ", "มังกร", "เสือขาว", "โมเดิร์น", "โมเดิล"
@@ -107,8 +120,13 @@ function rerankRecords(
   // จัดเรียงคะแนนจากมากไปน้อย
   scoredRecords.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
-  // กรองเฉพาะชุดข้อมูลที่มีความเกี่ยวข้อง หากมีรายการที่คะแนนสูง (>= 20) ให้ตัด noise ทิ้ง
+  // ถ้าอันดับ 1 เป็นคำตอบที่ตรงกับคำถามเป๊ะๆ (score >= 200) ให้ส่งคืนเฉพาะคำตอบที่ตรงเป๊ะอันดับ 1
   const topScore = scoredRecords[0]?.relevanceScore || 0;
+  if (topScore >= 200) {
+    return scoredRecords.slice(0, 1);
+  }
+
+  // กรองเฉพาะชุดข้อมูลที่มีความเกี่ยวข้อง หากมีรายการที่คะแนนสูง (>= 20) ให้ตัด noise ทิ้ง
   const filtered =
     topScore >= 20
       ? scoredRecords.filter((r) => r.relevanceScore >= 5)
@@ -250,20 +268,18 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
         return { answer, expertModelUsed };
       };
 
-      // ฟังก์ชันสำหรับบันทึกคำถาม-คำตอบลง Neo4j (Auto-Cache)
+      // ฟังก์ชันสำหรับบันทึกคำถาม-คำตอบลง Neo4j (Auto-Cache) แบบ MERGE เพื่อไม่ให้เกิดข้อมูลซ้ำ
       const cacheExternalQA = async (ans: string, sourceModel: string) => {
         const session = neo4jDriver.session();
         try {
           const embedding = await generateEmbedding(question);
           await session.run(
             `
-            CREATE (q:ExternalQA {
-              question: $question,
-              answer: $answer,
-              embedding: $embedding,
-              source: $source,
-              timestamp: timestamp()
-            })
+            MERGE (q:ExternalQA { question: $question })
+            SET q.answer = $answer,
+                q.embedding = $embedding,
+                q.source = $source,
+                q.timestamp = timestamp()
           `,
             { question, answer: ans, embedding, source: sourceModel }
           );
