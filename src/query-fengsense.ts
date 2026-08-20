@@ -142,37 +142,13 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
         let answer = "";
         let expertModelUsed = "deepseek-qwen";
 
-        const expertRes = await fetch(`${deepseekUrl}/chat/completions`, {
-          method: "POST",
-          headers: getDeepseekHeaders(),
-          body: JSON.stringify({
-            model: deepseekModel,
-            messages: [
-              { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
-              {
-                role: "user",
-                content: `${question}\n\n(หมายเหตุ: โปรดตอบเป็นภาษาไทยทั้งหมด หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ)`,
-              },
-            ],
-            temperature: deepseekTemperature,
-            max_tokens: deepseekMaxTokens,
-          }),
-        });
-
-        if (expertRes.ok) {
-          const expertData = (await expertRes.json()) as any;
-          const rawAnswer = expertData.choices?.[0]?.message?.content || "";
-          answer = rawAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-        } else {
-          console.warn("⚠️ DeepSeek expert failed, falling back to NT Qwen:", expertRes.statusText);
-          const qwenExpertRes = await fetch(`${ntUrl}/chat/completions`, {
+        try {
+          const expertRes = await fetch(`${deepseekUrl}/chat/completions`, {
             method: "POST",
-            headers: {
-              Authorization: `Bearer ${ntKey}`,
-              "Content-Type": "application/json",
-            },
+            headers: getDeepseekHeaders(),
+            signal: AbortSignal.timeout(25000), // Timeout 25 วินาที ป้องกันค้าง
             body: JSON.stringify({
-              model: ntModel,
+              model: deepseekModel,
               messages: [
                 { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
                 {
@@ -180,19 +156,57 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
                   content: `${question}\n\n(หมายเหตุ: โปรดตอบเป็นภาษาไทยทั้งหมด หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ)`,
                 },
               ],
-              temperature: 0.7,
-              max_tokens: 1000,
+              temperature: deepseekTemperature,
+              max_tokens: deepseekMaxTokens,
             }),
           });
 
-          if (qwenExpertRes.ok) {
-            const qwenData = (await qwenExpertRes.json()) as any;
-            const rawQwenAnswer =
-              qwenData.choices?.[0]?.messages?.content ||
-              qwenData.choices?.[0]?.message?.content ||
-              "";
-            answer = rawQwenAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-            expertModelUsed = "nt_qwen";
+          if (expertRes.ok) {
+            const expertData = (await expertRes.json()) as any;
+            const rawAnswer = expertData.choices?.[0]?.message?.content || "";
+            answer = rawAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+          } else {
+            console.warn("⚠️ DeepSeek expert failed, falling back to NT Qwen:", expertRes.statusText);
+          }
+        } catch (deepseekErr) {
+          console.warn("⚠️ DeepSeek expert error or timeout (25s), falling back to NT Qwen:", deepseekErr);
+        }
+
+        // Fallback to NT Qwen if DeepSeek-Qwen failed or timed out
+        if (!answer) {
+          try {
+            const qwenExpertRes = await fetch(`${ntUrl}/chat/completions`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${ntKey}`,
+                "Content-Type": "application/json",
+              },
+              signal: AbortSignal.timeout(20000),
+              body: JSON.stringify({
+                model: ntModel,
+                messages: [
+                  { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
+                  {
+                    role: "user",
+                    content: `${question}\n\n(หมายเหตุ: โปรดตอบเป็นภาษาไทยทั้งหมด หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ)`,
+                  },
+                ],
+                temperature: 0.7,
+                max_tokens: 1000,
+              }),
+            });
+
+            if (qwenExpertRes.ok) {
+              const qwenData = (await qwenExpertRes.json()) as any;
+              const rawQwenAnswer =
+                qwenData.choices?.[0]?.messages?.content ||
+                qwenData.choices?.[0]?.message?.content ||
+                "";
+              answer = rawQwenAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+              expertModelUsed = "nt_qwen";
+            }
+          } catch (ntErr) {
+            console.warn("⚠️ NT Qwen expert error or timeout:", ntErr);
           }
         }
 
@@ -307,69 +321,47 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
             .join("\n\n---\n\n");
 
           let answer = records[0].content;
-          let synthesisModelUsed = "deepseek-qwen";
+          let synthesisModelUsed = "neo4j_direct";
 
-          try {
-            // เรียก DeepSeek-Qwen เพื่อทำ RAG Synthesis
-            const ragRes = await fetch(`${deepseekUrl}/chat/completions`, {
-              method: "POST",
-              headers: getDeepseekHeaders(),
-              body: JSON.stringify({
-                model: deepseekModel,
-                messages: [
-                  { role: "system", content: RAG_SYNTHESIS_SYSTEM_PROMPT },
-                  {
-                    role: "user",
-                    content: `ข้อมูลบริบท (Context):\n${contextText}\n\nคำถาม: "${question}"\n\nโปรดคัดกรองและสรุปตอบคำถามเป็นภาษาไทยทั้งหมด (หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ):`,
-                  },
-                ],
-                temperature: deepseekTemperature,
-                max_tokens: deepseekMaxTokens,
-              }),
-            });
+          // ถ้าพบว่าคำถามตรงกับหัวข้อพอดี (เช่น ExternalQA Cache หรือคำตอบที่ตรงเป๊ะ) ให้ใช้คำตอบจาก Neo4j ได้ทันที
+          const isDirectMatch =
+            records[0].title &&
+            records[0].title.toLowerCase().trim() === question.toLowerCase().trim();
 
-            if (ragRes.ok) {
-              const ragData = (await ragRes.json()) as any;
-              const aiAnswer = ragData.choices?.[0]?.message?.content;
-              if (aiAnswer) {
-                answer = aiAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-              }
-            } else {
-              console.warn("⚠️ DeepSeek RAG synthesis failed, falling back to NT Qwen:", ragRes.statusText);
-              // Fallback to NT Qwen if DeepSeek fails
-              const qwenFallbackRes = await fetch(`${ntUrl}/chat/completions`, {
+          if (!isDirectMatch) {
+            try {
+              // เรียก DeepSeek-Qwen เพื่อทำ RAG Synthesis พร้อม Timeout 15 วินาที
+              const ragRes = await fetch(`${deepseekUrl}/chat/completions`, {
                 method: "POST",
-                headers: {
-                  Authorization: `Bearer ${ntKey}`,
-                  "Content-Type": "application/json",
-                },
+                headers: getDeepseekHeaders(),
+                signal: AbortSignal.timeout(15000), // Timeout 15s ป้องกันค้างจนเกิด 504 Gateway Timeout
                 body: JSON.stringify({
-                  model: ntModel,
+                  model: deepseekModel,
                   messages: [
                     { role: "system", content: RAG_SYNTHESIS_SYSTEM_PROMPT },
                     {
                       role: "user",
-                      content: `ข้อมูลบริบท (Context):\n${contextText}\n\nคำถาม: "${question}"\n\nโปรดตอบคำถามโดยอ้างอิงข้อมูลจากบริบทข้างต้นเป็นภาษาไทยทั้งหมด (หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ):`,
+                      content: `ข้อมูลบริบท (Context):\n${contextText}\n\nคำถาม: "${question}"\n\nโปรดคัดกรองและสรุปตอบคำถามเป็นภาษาไทยทั้งหมด (หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ):`,
                     },
                   ],
-                  temperature: 0.3,
-                  max_tokens: 1000,
+                  temperature: deepseekTemperature,
+                  max_tokens: deepseekMaxTokens,
                 }),
               });
 
-              if (qwenFallbackRes.ok) {
-                const qwenData = (await qwenFallbackRes.json()) as any;
-                const qwenAnswer =
-                  qwenData.choices?.[0]?.messages?.content ||
-                  qwenData.choices?.[0]?.message?.content;
-                if (qwenAnswer) {
-                  answer = qwenAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-                  synthesisModelUsed = "nt_qwen";
+              if (ragRes.ok) {
+                const ragData = (await ragRes.json()) as any;
+                const aiAnswer = ragData.choices?.[0]?.message?.content;
+                if (aiAnswer) {
+                  answer = aiAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+                  synthesisModelUsed = "deepseek-qwen";
                 }
+              } else {
+                console.warn("⚠️ DeepSeek RAG synthesis failed, using Neo4j record directly:", ragRes.statusText);
               }
+            } catch (ragErr) {
+              console.warn("⚠️ DeepSeek RAG synthesis timeout (15s) or error, falling back to Neo4j record directly:", ragErr);
             }
-          } catch (ragErr) {
-            console.warn("⚠️ RAG synthesis error, falling back to raw record content:", ragErr);
           }
 
           return {
