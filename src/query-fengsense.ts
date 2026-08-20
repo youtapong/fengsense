@@ -110,28 +110,49 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
       const ntKey = process.env.NT_QWEN_API_KEY || "";
       const ntModel = process.env.NT_QWEN_MODEL || "Qwen3.8-27B";
 
-      const deepseekUrl = process.env.DEEPSEEK_API_URL || "https://api.deepseek.com/v1";
-      const deepseekKey = process.env.DEEPSEEK_API_KEY || "";
-      const deepseekModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+      const deepseekUrl =
+        process.env.DEEPSEEK_QWEN_API_URL ||
+        process.env.DEEPSEEK_API_URL ||
+        "http://1.179.140.78:8002/v1";
+      const deepseekKey =
+        process.env.DEEPSEEK_QWEN_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? "";
+      const deepseekModel =
+        process.env.DEEPSEEK_QWEN_MODEL ||
+        process.env.DEEPSEEK_MODEL ||
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B";
+      const deepseekMaxTokens = process.env.DEEPSEEK_QWEN_MAX_TOKENS
+        ? parseInt(process.env.DEEPSEEK_QWEN_MAX_TOKENS)
+        : 512;
+      const deepseekTemperature = process.env.DEEPSEEK_QWEN_TEMPERATURE
+        ? parseFloat(process.env.DEEPSEEK_QWEN_TEMPERATURE)
+        : 0.6;
 
-      // ฟังก์ชันสำหรับถาม AI ผู้เชี่ยวชาญภายนอก (DeepSeek -> fallback NT Qwen)
+      const getDeepseekHeaders = () => {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (deepseekKey) {
+          headers["Authorization"] = `Bearer ${deepseekKey}`;
+        }
+        return headers;
+      };
+
+      // ฟังก์ชันสำหรับถาม AI ผู้เชี่ยวชาญภายนอก (DeepSeek-Qwen -> fallback NT Qwen)
       const askExternalExpert = async () => {
         let answer = "";
-        let expertModelUsed = "deepseek";
+        let expertModelUsed = "deepseek-qwen";
 
         const expertRes = await fetch(`${deepseekUrl}/chat/completions`, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${deepseekKey}`,
-            "Content-Type": "application/json",
-          },
+          headers: getDeepseekHeaders(),
           body: JSON.stringify({
             model: deepseekModel,
             messages: [
               { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
               { role: "user", content: question },
             ],
-            temperature: 0.7,
+            temperature: deepseekTemperature,
+            max_tokens: deepseekMaxTokens,
           }),
         });
 
@@ -278,16 +299,13 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
             .join("\n\n---\n\n");
 
           let answer = records[0].content;
-          let synthesisModelUsed = "deepseek";
+          let synthesisModelUsed = "deepseek-qwen";
 
           try {
-            // เรียก DeepSeek เพื่อทำ RAG Synthesis
+            // เรียก DeepSeek-Qwen เพื่อทำ RAG Synthesis
             const ragRes = await fetch(`${deepseekUrl}/chat/completions`, {
               method: "POST",
-              headers: {
-                Authorization: `Bearer ${deepseekKey}`,
-                "Content-Type": "application/json",
-              },
+              headers: getDeepseekHeaders(),
               body: JSON.stringify({
                 model: deepseekModel,
                 messages: [
@@ -297,7 +315,8 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
                     content: `ข้อมูลบริบท (Context):\n${contextText}\n\nคำถาม: "${question}"\n\nโปรดคัดกรองและสรุปตอบคำถามตามแนวทางที่กำหนด:`,
                   },
                 ],
-                temperature: 0.3,
+                temperature: deepseekTemperature,
+                max_tokens: deepseekMaxTokens,
               }),
             });
 

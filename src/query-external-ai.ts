@@ -63,29 +63,32 @@ export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
 
         // 3. Cache miss: Query DeepSeek AI
         const deepseekUrl =
-          process.env.DEEPSEEK_API_URL || "https://api.deepseek.com/v1";
-        const deepseekKey = process.env.DEEPSEEK_API_KEY;
-        const deepseekModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+          process.env.DEEPSEEK_QWEN_API_URL ||
+          process.env.DEEPSEEK_API_URL ||
+          "http://1.179.140.78:8002/v1";
+        const deepseekKey =
+          process.env.DEEPSEEK_QWEN_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? "";
+        const deepseekModel =
+          process.env.DEEPSEEK_QWEN_MODEL ||
+          process.env.DEEPSEEK_MODEL ||
+          "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B";
+        const deepseekMaxTokens = process.env.DEEPSEEK_QWEN_MAX_TOKENS
+          ? parseInt(process.env.DEEPSEEK_QWEN_MAX_TOKENS)
+          : 512;
+        const deepseekTemperature = process.env.DEEPSEEK_QWEN_TEMPERATURE
+          ? parseFloat(process.env.DEEPSEEK_QWEN_TEMPERATURE)
+          : 0.6;
 
-        if (!deepseekKey || deepseekKey === "your_key_here") {
-          console.warn("⚠️ DeepSeek API key is missing or not configured.");
-          await session.close();
-          set.status = 402;
-          return {
-            success: false,
-            question,
-            resultsCount: 0,
-            hint: "token หมดไหม",
-            error: "DeepSeek API key is not configured",
-          };
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (deepseekKey) {
+          headers["Authorization"] = `Bearer ${deepseekKey}`;
         }
 
         const response = await fetch(`${deepseekUrl}/chat/completions`, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${deepseekKey}`,
-            "Content-Type": "application/json",
-          },
+          headers,
           body: JSON.stringify({
             model: deepseekModel,
             messages: [
@@ -95,7 +98,8 @@ export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
               },
               { role: "user", content: question },
             ],
-            temperature: 0.7,
+            temperature: deepseekTemperature,
+            max_tokens: deepseekMaxTokens,
           }),
         });
 
