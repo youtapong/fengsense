@@ -21,9 +21,9 @@ Your job is to translate a Thai natural language question into an optimized and 
    - If user asks about a specific combination (e.g. 'จัดสวน โมเดิร์น'), search for the core topic 'สวน'/'จัดสวน' and optionally combine with 'โมเดิร์น'/'โมเดิล' using AND, or search the compound phrase.
 4. Use case-insensitive searching with toLower() or CONTAINS for search terms.
 5. You can search both (:Chunk) nodes and (:ExternalQA) nodes when relevant using UNION.
-6. IMPORTANT: Unify the return fields. The query MUST return exactly two columns: 'title' and 'content'.
-   - For (:Chunk) nodes: RETURN c.title AS title, c.content AS content
-   - For (:ExternalQA) nodes: RETURN q.question AS title, q.answer AS content
+6. IMPORTANT: Unify the return fields. The query MUST return exactly three columns: 'title', 'content', and 'source'.
+   - For (:Chunk) nodes: RETURN c.title AS title, c.content AS content, 'internal_doc' AS source
+   - For (:ExternalQA) nodes: RETURN q.question AS title, q.answer AS content, 'external_data' AS source
 7. Always add LIMIT 5 per query branch to avoid overloading.
 
 ### Examples:
@@ -31,35 +31,35 @@ Your job is to translate a Thai natural language question into an optimized and 
   Cypher:
   MATCH (c:Chunk)
   WHERE toLower(c.title) CONTAINS toLower('โต๊ะทำงาน') OR toLower(c.content) CONTAINS toLower('โต๊ะทำงาน')
-  RETURN c.title AS title, c.content AS content
+  RETURN c.title AS title, c.content AS content, 'internal_doc' AS source
   LIMIT 5
   UNION
   MATCH (q:ExternalQA)
   WHERE toLower(q.question) CONTAINS toLower('โต๊ะทำงาน') OR toLower(q.answer) CONTAINS toLower('โต๊ะทำงาน')
-  RETURN q.question AS title, q.answer AS content
+  RETURN q.question AS title, q.answer AS content, 'external_data' AS source
   LIMIT 5
 
 - Question: "การจัดสวน แบบโมเดิล โปร่งสบาย"
   Cypher:
   MATCH (c:Chunk)
   WHERE toLower(c.title) CONTAINS toLower('จัดสวน') OR toLower(c.content) CONTAINS toLower('จัดสวน') OR toLower(c.title) CONTAINS toLower('สวน') OR toLower(c.content) CONTAINS toLower('สวน')
-  RETURN c.title AS title, c.content AS content
+  RETURN c.title AS title, c.content AS content, 'internal_doc' AS source
   LIMIT 5
   UNION
   MATCH (q:ExternalQA)
   WHERE toLower(q.question) CONTAINS toLower('จัดสวน') OR toLower(q.answer) CONTAINS toLower('จัดสวน') OR toLower(q.question) CONTAINS toLower('สวน') OR toLower(q.answer) CONTAINS toLower('สวน')
-  RETURN q.question AS title, q.answer AS content
+  RETURN q.question AS title, q.answer AS content, 'external_data' AS source
   LIMIT 5
 
 - Question: "ประตูหน้าบ้านตรงกับประตูหลังบ้านแก้ยังไง"
   Cypher:
   MATCH (c:Chunk)
   WHERE toLower(c.title) CONTAINS toLower('ประตู') OR toLower(c.content) CONTAINS toLower('ประตู')
-  RETURN c.title AS title, c.content AS content
+  RETURN c.title AS title, c.content AS content, 'internal_doc' AS source
   LIMIT 5
   UNION
   MATCH (q:ExternalQA)
   WHERE toLower(q.question) CONTAINS toLower('ประตู') OR toLower(q.answer) CONTAINS toLower('ประตู')
-  RETURN q.question AS title, q.answer AS content
+  RETURN q.question AS title, q.answer AS content, 'external_data' AS source
   LIMIT 5
 `;

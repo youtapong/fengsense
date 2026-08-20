@@ -46,13 +46,15 @@ function removeChinese(text: string): string {
 }
 
 /**
- * คำนวณคะแนนความเกี่ยวข้อง (Relevance Score) ระหว่างคำถามกับแต่ละ Record
+ * ฟังก์ชันจัดลำดับความเกี่ยวข้อง (Relevance Scoring & Re-ranking)
+ * ให้คะแนนความสอดคล้องระหว่างคำถามกับ Title และ Content ของแต่ละ Record
  * และจัดลำดับจากคะแนนสูงสุดไปต่ำสุด เพื่อให้ชุดข้อมูลที่ตรงที่สุดขึ้นก่อนเสมอ
+ * (โดยให้โบนัสคะแนนพิเศษกับ External Data เพื่อให้มี relevanceScore สูงกว่าข้อมูลทั่วไป)
  */
 function rerankRecords(
   question: string,
-  records: Array<{ title?: string; content?: string }>
-): Array<{ title: string; content: string; relevanceScore: number }> {
+  records: Array<{ title?: string; content?: string; source?: string }>
+): Array<{ title: string; content: string; source: string; relevanceScore: number }> {
   const normalizedQ = question.toLowerCase().trim();
 
   // สกัดคำสำคัญ (Keywords) โดยตัดคำเชื่อมทั่วไป
@@ -62,39 +64,47 @@ function rerankRecords(
   const rawWords = normalizedQ.split(/[\s,.\-_/\\+]+/);
   const keywords = rawWords.filter((w) => w.length > 1 && !stopWords.has(w));
 
-  // 1. ตัดรายการที่ซ้ำซ้อนกันออก (Deduplication)
-  const uniqueRecords: Array<{ title: string; content: string }> = [];
-  const seen = new Set<string>();
+  // 1. ตัดรายการที่ซ้ำซ้อนกันออก (Deduplication) โดยจัดเก็บ source เอาไว้
+  const uniqueRecords: Array<{ title: string; content: string; source: string }> = [];
+  const seen = new Map<string, { title: string; content: string; source: string }>();
   for (const r of records) {
     const key = `${(r.title || "").trim()}:::${(r.content || "").trim().substring(0, 100)}`;
+    const src = r.source || "internal_doc";
     if (!seen.has(key)) {
-      seen.add(key);
-      uniqueRecords.push({ title: r.title || "", content: r.content || "" });
+      const item = { title: r.title || "", content: r.content || "", source: src };
+      seen.set(key, item);
+      uniqueRecords.push(item);
+    } else if (src === "external_data") {
+      // หากข้อมูลซ้ำกันแต่ตัวใดตัวหนึ่งมาจาก external_data ให้อัปเดตเป็น external_data
+      const existing = seen.get(key);
+      if (existing) existing.source = "external_data";
     }
   }
 
   const scoredRecords = uniqueRecords.map((r) => {
     const title = r.title || "";
     const content = r.content || "";
+    const source = r.source || "internal_doc";
     const lowerTitle = title.toLowerCase().trim();
     const lowerContent = content.toLowerCase();
+    const isExternal = source === "external_data" || source.includes("external");
 
     let score = 0;
 
     // 2. ถ้า Title ตรงกับคำถามเป๊ะๆ (Exact Match เช่น ExternalQA หรือหัวข้อตรงเป๊ะ)
     if (lowerTitle && lowerTitle === normalizedQ) {
-      score += 200; // การันตีอันดับ 1 คะแนนสูงสุด
+      score += isExternal ? 300 : 200; // ExternalQA ที่ตรงเป๊ะได้คะแนนสูงสุดพิเศษ
     } else if (lowerTitle && (normalizedQ.includes(lowerTitle) || lowerTitle.includes(normalizedQ))) {
-      score += 80;
+      score += isExternal ? 120 : 80;
     }
 
     // 3. ตรวจสอบการตรงกันของ Keywords ใน Title และ Content
     for (const kw of keywords) {
       if (lowerTitle.includes(kw)) {
-        score += 20; // ปรากฏในหัวข้อ ให้คะแนนสูงมาก
+        score += isExternal ? 30 : 20; // ปรากฏในหัวข้อ ให้คะแนนสูงกว่าเมื่อมาจาก external
       }
       if (lowerContent.includes(kw)) {
-        score += 2; // ปรากฏในเนื้อหา
+        score += isExternal ? 3 : 2; // ปรากฏในเนื้อหา
       }
     }
 
@@ -110,9 +120,16 @@ function rerankRecords(
       }
     }
 
+    // 5. โบนัสคะแนนพิเศษสำหรับ External Data (ExternalQA)
+    // ให้ค่า relevanceScore สูงกว่าข้อมูลภายในที่เก็บไว้ เพื่อให้นำมาแสดงผลก่อนเมื่อค้นหาด้วย internal ในคราวถัดไป
+    if (isExternal && score > 0) {
+      score += 50;
+    }
+
     return {
       title,
       content,
+      source,
       relevanceScore: score,
     };
   });
