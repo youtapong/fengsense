@@ -9,6 +9,43 @@ import {
 import { generateEmbedding } from "./services/markdownIngest";
 
 /**
+ * ตัดตัวอักษรภาษาจีน เครื่องหมายวรรคตอนภาษาจีน และประโยคภาษาจีนออกจากข้อความผลลัพธ์
+ */
+function removeChinese(text: string): string {
+  if (!text) return "";
+
+  // 1. ตัดแท็ก <think>...</think> ออกก่อน
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+
+  // 2. แยกบรรทัด หากบรรทัดใดเป็นภาษาจีนล้วนหรือเกือบทั้งหมด (> 40% อักษรจีน) ให้ตัดบรรทัดนั้นทิ้ง
+  const lines = cleaned.split("\n");
+  const filteredLines = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    const chineseChars = (trimmed.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || []).length;
+    const totalChars = trimmed.replace(/\s+/g, "").length;
+    if (totalChars > 0 && chineseChars / totalChars > 0.4) {
+      return false;
+    }
+    return true;
+  });
+  cleaned = filteredLines.join("\n");
+
+  // 3. ลบตัวอักษรจีนและเครื่องหมายวรรคตอนภาษาจีนที่แทรกอยู่ในข้อความ
+  cleaned = cleaned
+    .replace(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g, "")
+    .replace(/[\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]/g, "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\[\s*\]/g, "")
+    .replace(/\{\s*\}/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return cleaned;
+}
+
+/**
  * คำนวณคะแนนความเกี่ยวข้อง (Relevance Score) ระหว่างคำถามกับแต่ละ Record
  * และจัดลำดับจากคะแนนสูงสุดไปต่ำสุด เพื่อให้ชุดข้อมูลที่ตรงที่สุดขึ้นก่อนเสมอ
  */
@@ -249,14 +286,16 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
             return { success: false, query_option, error: "Empty response from AI expert" };
           }
 
+          const cleanedAnswer = removeChinese(answer);
+
           // บันทึกคำถามและคำตอบไว้ที่ Neo4j (Auto-Cache)
-          await cacheExternalQA(answer, expertModelUsed);
+          await cacheExternalQA(cleanedAnswer, expertModelUsed);
 
           return {
             success: true,
             query_option: "ext",
             question,
-            answer,
+            answer: cleanedAnswer,
             source: `${expertModelUsed}_ai`,
             resultsCount: 1,
             savedToGraph: true,
@@ -364,6 +403,8 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
             }
           }
 
+          const cleanedAnswer = removeChinese(answer);
+
           return {
             success: true,
             query_option: "int",
@@ -372,8 +413,12 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
             cypherQuery,
             resultsCount: records.length,
             synthesisModel: synthesisModelUsed,
-            answer,
-            results: records,
+            answer: cleanedAnswer,
+            results: records.map((r) => ({
+              ...r,
+              title: removeChinese(r.title),
+              content: removeChinese(r.content),
+            })),
           };
         }
 
@@ -387,14 +432,16 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
           return { success: false, query_option: "int", error: "Empty response from AI expert" };
         }
 
+        const cleanedAnswer = removeChinese(answer);
+
         // บันทึกคำถามและคำตอบไว้ที่ Neo4j (Auto-Cache)
-        await cacheExternalQA(answer, expertModelUsed);
+        await cacheExternalQA(cleanedAnswer, expertModelUsed);
 
         return {
           success: true,
           query_option: "int",
           question,
-          answer,
+          answer: cleanedAnswer,
           source: `${expertModelUsed}_ai`,
           resultsCount: 1,
           savedToGraph: true,

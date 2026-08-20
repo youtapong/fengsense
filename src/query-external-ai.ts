@@ -4,6 +4,38 @@ import { neo4jDriver } from "./neo4j";
 import { generateEmbedding } from "./services/markdownIngest";
 import { FENGSHUI_EXPERT_SYSTEM_PROMPT } from "./prompts";
 
+/**
+ * ตัดตัวอักษรภาษาจีน เครื่องหมายวรรคตอนภาษาจีน และประโยคภาษาจีนออกจากข้อความผลลัพธ์
+ */
+function removeChinese(text: string): string {
+  if (!text) return "";
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  const lines = cleaned.split("\n");
+  const filteredLines = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    const chineseChars = (trimmed.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || []).length;
+    const totalChars = trimmed.replace(/\s+/g, "").length;
+    if (totalChars > 0 && chineseChars / totalChars > 0.4) {
+      return false;
+    }
+    return true;
+  });
+  cleaned = filteredLines.join("\n");
+
+  cleaned = cleaned
+    .replace(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g, "")
+    .replace(/[\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]/g, "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\[\s*\]/g, "")
+    .replace(/\{\s*\}/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return cleaned;
+}
+
 export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
   .use(
     jwt({
@@ -140,7 +172,7 @@ export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
           };
         }
 
-        const answer = rawAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+        const answer = removeChinese(rawAnswer);
 
         // 4. Save the new answer to Neo4j cache
         await session.run(
