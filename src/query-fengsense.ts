@@ -149,7 +149,10 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
             model: deepseekModel,
             messages: [
               { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
-              { role: "user", content: question },
+              {
+                role: "user",
+                content: `${question}\n\n(หมายเหตุ: โปรดตอบเป็นภาษาไทยทั้งหมด หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ)`,
+              },
             ],
             temperature: deepseekTemperature,
             max_tokens: deepseekMaxTokens,
@@ -158,7 +161,8 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
 
         if (expertRes.ok) {
           const expertData = (await expertRes.json()) as any;
-          answer = expertData.choices?.[0]?.message?.content || "";
+          const rawAnswer = expertData.choices?.[0]?.message?.content || "";
+          answer = rawAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
         } else {
           console.warn("⚠️ DeepSeek expert failed, falling back to NT Qwen:", expertRes.statusText);
           const qwenExpertRes = await fetch(`${ntUrl}/chat/completions`, {
@@ -171,7 +175,10 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
               model: ntModel,
               messages: [
                 { role: "system", content: FENGSHUI_EXPERT_SYSTEM_PROMPT },
-                { role: "user", content: question },
+                {
+                  role: "user",
+                  content: `${question}\n\n(หมายเหตุ: โปรดตอบเป็นภาษาไทยทั้งหมด หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ)`,
+                },
               ],
               temperature: 0.7,
               max_tokens: 1000,
@@ -180,10 +187,11 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
 
           if (qwenExpertRes.ok) {
             const qwenData = (await qwenExpertRes.json()) as any;
-            answer =
+            const rawQwenAnswer =
               qwenData.choices?.[0]?.messages?.content ||
               qwenData.choices?.[0]?.message?.content ||
               "";
+            answer = rawQwenAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
             expertModelUsed = "nt_qwen";
           }
         }
@@ -312,7 +320,7 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
                   { role: "system", content: RAG_SYNTHESIS_SYSTEM_PROMPT },
                   {
                     role: "user",
-                    content: `ข้อมูลบริบท (Context):\n${contextText}\n\nคำถาม: "${question}"\n\nโปรดคัดกรองและสรุปตอบคำถามตามแนวทางที่กำหนด:`,
+                    content: `ข้อมูลบริบท (Context):\n${contextText}\n\nคำถาม: "${question}"\n\nโปรดคัดกรองและสรุปตอบคำถามเป็นภาษาไทยทั้งหมด (หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ):`,
                   },
                 ],
                 temperature: deepseekTemperature,
@@ -324,7 +332,7 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
               const ragData = (await ragRes.json()) as any;
               const aiAnswer = ragData.choices?.[0]?.message?.content;
               if (aiAnswer) {
-                answer = aiAnswer;
+                answer = aiAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
               }
             } else {
               console.warn("⚠️ DeepSeek RAG synthesis failed, falling back to NT Qwen:", ragRes.statusText);
@@ -341,7 +349,7 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
                     { role: "system", content: RAG_SYNTHESIS_SYSTEM_PROMPT },
                     {
                       role: "user",
-                      content: `ข้อมูลบริบท (Context):\n${contextText}\n\nคำถาม: "${question}"\n\nโปรดตอบคำถามโดยอ้างอิงข้อมูลจากบริบทข้างต้น:`,
+                      content: `ข้อมูลบริบท (Context):\n${contextText}\n\nคำถาม: "${question}"\n\nโปรดตอบคำถามโดยอ้างอิงข้อมูลจากบริบทข้างต้นเป็นภาษาไทยทั้งหมด (หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ):`,
                     },
                   ],
                   temperature: 0.3,
@@ -355,7 +363,7 @@ export const queryFengSense = new Elysia({ prefix: "/query_FengSense" })
                   qwenData.choices?.[0]?.messages?.content ||
                   qwenData.choices?.[0]?.message?.content;
                 if (qwenAnswer) {
-                  answer = qwenAnswer;
+                  answer = qwenAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
                   synthesisModelUsed = "nt_qwen";
                 }
               }

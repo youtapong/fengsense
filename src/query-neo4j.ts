@@ -30,19 +30,19 @@ export const queryNeo4j = new Elysia({ prefix: "/query-neo4j" })
       const { question } = body;
 
       try {
-        const qwenUrl = process.env.QWEN_API_URL || "http://209.15.120.6:8000/v1";
-        const qwenKey = process.env.QWEN_API_KEY || "dG9rZW5fdG90X2lkY19hc3NldA==";
-        const qwenModel = process.env.QWEN_MODEL || "Qwen/Qwen3-14B-AWQ";
+        const ntUrl = process.env.NT_QWEN_API_URL || "https://aigateway.ntictsolution.com/v1";
+        const ntKey = process.env.NT_QWEN_API_KEY || "";
+        const ntModel = process.env.NT_QWEN_MODEL || "Qwen3.8-27B";
 
-        // Call Qwen API to translate question into Cypher query
-        const response = await fetch(`${qwenUrl}/chat/completions`, {
+        // Call NT Qwen API to translate question into Cypher query
+        const response = await fetch(`${ntUrl}/chat/completions`, {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${qwenKey}`,
+            "Authorization": `Bearer ${ntKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: qwenModel,
+            model: ntModel,
             messages: [
               { role: "system", content: CYPHER_SYSTEM_PROMPT },
               { role: "user", content: `คำถาม: "${question}" \nสร้าง Cypher query:` },
@@ -52,14 +52,14 @@ export const queryNeo4j = new Elysia({ prefix: "/query-neo4j" })
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to contact Qwen API: ${response.statusText}`);
+          throw new Error(`Failed to contact NT Qwen API: ${response.statusText}`);
         }
 
         const data = (await response.json()) as any;
         let cypherQuery = data.choices[0].messages?.content || data.choices[0].message?.content;
         
         if (!cypherQuery) {
-          throw new Error("No Cypher query was returned from Qwen API.");
+          throw new Error("No Cypher query was returned from NT Qwen API.");
         }
 
         // Clean up markdown block styling from generated Cypher
@@ -100,7 +100,7 @@ export const queryNeo4j = new Elysia({ prefix: "/query-neo4j" })
         }),
       }),
       detail: {
-        summary: "Ask questions in natural language and query Neo4j using Qwen AI (JWT protected)",
+        summary: "Ask questions in natural language and query Neo4j using NT Qwen AI (JWT protected)",
         security: [
           {
             bearerAuth: [],

@@ -96,7 +96,10 @@ export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
                 role: "system",
                 content: FENGSHUI_EXPERT_SYSTEM_PROMPT,
               },
-              { role: "user", content: question },
+              {
+                role: "user",
+                content: `${question}\n\n(หมายเหตุ: โปรดตอบเป็นภาษาไทยทั้งหมด หากมีคำศัพท์หรือตัวอักษรภาษาจีนให้แปลและอธิบายเป็นภาษาไทยกำกับด้วยครับ)`,
+              },
             ],
             temperature: deepseekTemperature,
             max_tokens: deepseekMaxTokens,
@@ -119,9 +122,9 @@ export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
         }
 
         const data = (await response.json()) as any;
-        const answer = data.choices?.[0]?.message?.content;
+        const rawAnswer = data.choices?.[0]?.message?.content;
 
-        if (!answer) {
+        if (!rawAnswer) {
           console.error(
             "❌ DeepSeek response payload did not contain message content:",
             data,
@@ -136,6 +139,8 @@ export const queryExternalAI = new Elysia({ prefix: "/query-external-ai" })
             error: "Empty response content from DeepSeek",
           };
         }
+
+        const answer = rawAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
         // 4. Save the new answer to Neo4j cache
         await session.run(
